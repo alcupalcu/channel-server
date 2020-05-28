@@ -5,10 +5,7 @@ import java.nio.CharBuffer;
 import java.nio.channels.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Set;
+import java.util.*;
 
 public class ChannelServer {
 
@@ -39,7 +36,7 @@ public class ChannelServer {
         this.hostName = hostName;
         this.serverPort = serverPort;
         this.subscribers = new HashMap<>();
-        this.responseForClient = new StringBuffer();
+        this.topicsAvailable = new ArrayList<>();
 
         try {
             configureServerSocketChannel();
@@ -87,6 +84,7 @@ public class ChannelServer {
             selectorKeysIterator.remove();
 
             if (selectorKey.isAcceptable()) {
+                System.out.println("New connection.");
                 SocketChannel acceptedChanel = serverSocketChannel.accept();
                 configureSocketChannelBlocking(acceptedChanel, false);
                 registerChannelInSelector(acceptedChanel, READ_WRITE_MODE);
@@ -178,7 +176,7 @@ public class ChannelServer {
 
     private void sendTopics(SocketChannel subscriberChannel) throws IOException {
         response(ResponseType.TOPICS, subscriberChannel);
-        System.out.println("Topics send to the client listening on port: " + subscriberChannel.socket().getPort());
+        System.out.println("Topics sent to the client listening on port: " + subscriberChannel.socket().getPort());
     }
 
     private void assignSubscription(SocketChannel subscriberChannel, String topic) {
@@ -200,12 +198,13 @@ public class ChannelServer {
     }
 
     private void response(ResponseType responseType, SocketChannel subscriberChannel) throws IOException {
-        responseForClient.setLength(0);
         switch (responseType) {
             case TOPICS:
                 for (String topic : topicsAvailable) {
                     sendTopic(subscriberChannel, topic);
+                    System.out.println("Topic sent: " + topic);
                 }
+                endResponse(subscriberChannel);
                 break;
             case UPDATE_TOPIC:
                 //SEND NEWS RELATED TO TOPIC
@@ -222,10 +221,18 @@ public class ChannelServer {
     }
 
     private void sendTopic(SocketChannel subscriberChannel, String topic) throws IOException {
+        responseForClient = new StringBuffer();
+        responseForClient.setLength(0);
         responseForClient.append("TOPIC");
         responseForClient.append(" ");
         responseForClient.append(topic);
-        responseForClient.append("\n");
+        ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
+        subscriberChannel.write(bufferForEncoding);
+    }
+
+    private void endResponse(SocketChannel subscriberChannel) throws IOException {
+        responseForClient.setLength(0);
+        responseForClient.append("END");
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
     }
