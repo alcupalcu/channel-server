@@ -28,7 +28,9 @@ public class ChannelClientModel {
 
     private ArrayList<String> topics;
 
-    ChannelClientModel(String serverName, int serverPortNumber) {
+    private Updater updater;
+
+    ChannelClientModel(String serverName, int serverPortNumber, ChannelClientController controller) {
         setServerName(serverName);
         setServerPortNumber(serverPortNumber);
         this.topics = new ArrayList<>();
@@ -43,6 +45,8 @@ public class ChannelClientModel {
             exc.printStackTrace();
             System.exit(2);
         }
+
+        this.updater = new Updater(this.channel, controller);
     }
 
     public void connect() throws UnknownHostException, IOException {
@@ -96,7 +100,7 @@ public class ChannelClientModel {
                         System.out.println("ENDED RECEIVING.");
                         break;
                     } else {
-                        String[] response = responseBuffer.toString().split(" ");
+                        String[] response = responseBuffer.toString().split("\t");
                         if (response.length < 2) {
                             break;
                         }
@@ -118,6 +122,46 @@ public class ChannelClientModel {
     private void clearBuffers() {
         this.inBuffer.clear();
         this.responseBuffer = new StringBuffer();
+    }
+
+    public void askForTopics() throws Exception {
+        if (!channel.isOpen()) {
+            throw new Exception("Channel is closed.");
+        }
+        responseBuffer = new StringBuffer();
+        responseBuffer.setLength(0);
+        responseBuffer.append("SEND_TOPICS");
+        responseBuffer.append("\n");
+        ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+        channel.write(outBuffer);
+    }
+
+    public void subscribe(String topic) throws Exception {
+        if (!channel.isOpen()) {
+            throw new Exception("Channel is closed.");
+        }
+        responseBuffer = new StringBuffer();
+        responseBuffer.setLength(0);
+        responseBuffer.append("SUBSCRIBE");
+        responseBuffer.append("\t");
+        responseBuffer.append(topic);
+        responseBuffer.append("\n");
+        ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+        channel.write(outBuffer);
+    }
+
+    public void unsubscribe(String topic) throws Exception {
+        if (!channel.isOpen()) {
+            throw new Exception("Channel is closed.");
+        }
+        responseBuffer = new StringBuffer();
+        responseBuffer.setLength(0);
+        responseBuffer.append("UNSUBSCRIBE");
+        responseBuffer.append("\t");
+        responseBuffer.append(topic);
+        responseBuffer.append("\n");
+        ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+        channel.write(outBuffer);
     }
 
     private void setServerName(String serverName) {
@@ -142,5 +186,71 @@ public class ChannelClientModel {
 
     public SocketChannel getChannel() {
         return this.channel;
+    }
+
+    public Updater getUpdater() {
+        return updater;
+    }
+
+    class Updater extends Thread {
+
+        private Charset charset = StandardCharsets.UTF_8;
+        private ByteBuffer inBuffer = ByteBuffer.allocate(BUFF_SIZE);
+        private StringBuffer updateContentBuffer;
+        private Matcher matchEnd = Pattern.compile("END").matcher("");
+
+        private SocketChannel communicationChannelForUpdate;
+        private ChannelClientController controller;
+
+        public Updater(SocketChannel communicationChannel, ChannelClientController controller) {
+            communicationChannelForUpdate = communicationChannel;
+            this.controller = controller;
+        }
+
+        public void run() {
+
+            try {
+                while (true) {
+                    inBuffer.clear();
+                    int readBytes = channel.read(inBuffer);
+                    if (readBytes == 0) {
+                        Thread.sleep(200);
+                    }
+                    else if (readBytes == -1) {
+                        System.out.println("Channel is closed");
+                        channel.close();
+                    }
+                    else {
+                        updateContentBuffer = new StringBuffer();
+                        inBuffer.flip();
+                        CharBuffer inCharBuffer = charset.decode(inBuffer);
+                        updateContentBuffer.append(inCharBuffer);
+                        inCharBuffer.clear();
+                        String[] update = updateContentBuffer.toString().split("\t");
+                        if (update.length < 2) {
+                            break;
+                        }
+                        String command = update[0];
+                        if (command.equals("UPDATE_NEWS")) {
+                            if (update.length < 3) {
+                                break;
+                            }
+                        }
+
+                        switch (command) {
+                            case "TOPIC":
+                                String topic = update[1];
+                                topics.add(topic);
+                                controller.notifyController(ChannelClientController.Updates.ADD_TOPIC, topic);
+                                break;
+                            default:
+                                System.out.println("Update request unrecognized.");
+                        }
+                    }
+                }
+            } catch (Exception exc) {
+                exc.printStackTrace();
+            }
+        }
     }
 }

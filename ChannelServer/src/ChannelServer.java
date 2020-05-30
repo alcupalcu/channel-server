@@ -13,18 +13,11 @@ public class ChannelServer {
     private final int[] READ_WRITE_MODE = new int[] { SelectionKey.OP_READ, SelectionKey.OP_WRITE };
     private final int BUFFER_SIZE = 1024;
 
-    private enum ResponseType {
-        TOPICS,
-        UPDATE_TOPIC,
-        DELETE_TOPIC,
-        UNKNOWN_COMMAND
-    }
-
     private ServerSocketChannel serverSocketChannel = null;
     private Selector channelSelector = null;
     private Charset requestsCharset = StandardCharsets.UTF_8;
     private ByteBuffer communicationChannelBuffer = ByteBuffer.allocate(BUFFER_SIZE);
-    private StringBuffer responseForClient;
+    private StringBuffer requestFromClient;
 
     private ArrayList<String> topicsAvailable;
     private HashMap<SocketChannel, ArrayList<String>> subscribers;
@@ -37,6 +30,7 @@ public class ChannelServer {
         this.serverPort = serverPort;
         this.subscribers = new HashMap<>();
         this.topicsAvailable = new ArrayList<>();
+        this.requestFromClient = new StringBuffer();
 
         try {
             configureServerSocketChannel();
@@ -64,7 +58,7 @@ public class ChannelServer {
                 waitForEventsFromRegisteredChannels();
                 handleEventsOnRegisteredChannels();
             } catch (IOException exc) {
-                exc.printStackTrace();
+                System.out.println("Client disconnected unexpectedly.");
                 System.exit(2);
             }
         }
@@ -84,11 +78,10 @@ public class ChannelServer {
             selectorKeysIterator.remove();
 
             if (selectorKey.isAcceptable()) {
-                System.out.println("New connection.");
                 SocketChannel acceptedChanel = serverSocketChannel.accept();
                 configureSocketChannelBlocking(acceptedChanel, false);
                 registerChannelInSelector(acceptedChanel, READ_WRITE_MODE);
-                sendTopics(acceptedChanel);
+                subscribers.put(acceptedChanel, new ArrayList<>());
             }
 
             if (selectorKey.isReadable()) {
@@ -99,36 +92,54 @@ public class ChannelServer {
     }
 
     private void handleRequest(SocketChannel communicationChannel) throws IOException {
-        if (!communicationChannel.isOpen()) {
-            return;
-        }
 
         readRequest(communicationChannel);
 
-        String[] requestContent = responseForClient.toString().split(" ");
+        String[] requestContent = requestFromClient.toString().split("\t");
         String command = requestContent[0];
 
         switch (command) {
+            case "ADMIN":
+                this.subscribers.remove(communicationChannel);
+                break;
             case "SUBSCRIBE":
+                System.out.println("Request for subscription from " + communicationChannel.socket().getPort());
                 String topicForSubscription = requestContent[1];
                 assignSubscription(communicationChannel, topicForSubscription);
-                response(ResponseType.UPDATE_TOPIC, communicationChannel);
                 break;
-                /* ADD NEW CASES */
-                /* <--- ADD --->*/
-                /* <--- ADD --->*/
-                /* <--- ADD --->*/
             case "UNSUBSCRIBE":
+                System.out.println("Request for stopping subscription from " + communicationChannel.socket().getPort());
                 String topicToUnsubscribe = requestContent[1];
                 deleteSubscription(communicationChannel, topicToUnsubscribe);
-                response(ResponseType.DELETE_TOPIC, communicationChannel);
+                break;
+            case "ADD_TOPIC":
+                String topicAdded = requestContent[1];
+                System.out.println("Admin adding topic " + topicAdded + ".");
+                this.topicsAvailable.add(topicAdded);
+                sendTopicToClients(topicAdded);
+                break;
+            case "UPDATE_NEWS":
+                String topicToUpdate = requestContent[1];
+                String newsContent = requestContent[2];
+                System.out.println("Admin updating topic " + topicToUpdate + ".");
+                updateTopic(topicToUpdate, newsContent);
+                break;
+            case "DELETE_TOPIC":
+                String topicToDelete = requestContent[1];
+                System.out.println("Admin deleted topic " + topicToDelete + ".");
+                deleteTopic(topicToDelete);
+                break;
+            case "SEND_TOPICS":
+                sendTopics(communicationChannel);
+                break;
             default:
-                response(ResponseType.UNKNOWN_COMMAND, communicationChannel);
+                System.out.println("Request incorrect.");
         }
     }
 
     private void readRequest(SocketChannel communicationChannel) throws IOException {
-        responseForClient.setLength(0);
+        requestFromClient = new StringBuffer();
+        requestFromClient.setLength(0);
         readRequestLoop:
         while (true) {
             int sizeOfChannelData = communicationChannel.read(communicationChannelBuffer);
@@ -138,9 +149,10 @@ public class ChannelServer {
                 while (decodedRequestBuffer.hasRemaining()) {
                     char bufferContentChar = decodedRequestBuffer.get();
                     if (bufferContentChar == '\n') {
+                        communicationChannelBuffer.clear();
                         break readRequestLoop;
                     }
-                    responseForClient.append(bufferContentChar);
+                    requestFromClient.append(bufferContentChar);
                 }
             }
         }
@@ -175,62 +187,96 @@ public class ChannelServer {
     }
 
     private void sendTopics(SocketChannel subscriberChannel) throws IOException {
-        response(ResponseType.TOPICS, subscriberChannel);
+        for (String topic : topicsAvailable) {
+            sendTopic(subscriberChannel, topic);
+            System.out.println("Topic sent: " + topic);
+        }
+        endResponse(subscriberChannel);
         System.out.println("Topics sent to the client listening on port: " + subscriberChannel.socket().getPort());
     }
 
     private void assignSubscription(SocketChannel subscriberChannel, String topic) {
         if (this.subscribers.containsKey(subscriberChannel)) {
+            if (this.subscribers.get(subscriberChannel).isEmpty()) {
+                ArrayList<String> topicsForNewSubscriber = new ArrayList<>();
+                topicsForNewSubscriber.add(topic);
+                this.subscribers.put(subscriberChannel, topicsForNewSubscriber);
+            }
             if (!this.subscribers.get(subscriberChannel).contains(topic)) {
                 this.subscribers.get(subscriberChannel).add(topic);
             }
-        } else {
-            ArrayList<String> topicsForNewSubscriber = new ArrayList<>();
-            topicsForNewSubscriber.add(topic);
-            this.subscribers.put(subscriberChannel, topicsForNewSubscriber);
         }
+        System.out.println(subscriberChannel.socket().getPort() + " subscribing: " + topic);
     }
 
     private void deleteSubscription(SocketChannel subscriberChannel, String topic) {
         if (this.subscribers.containsKey(subscriberChannel)) {
             this.subscribers.get(subscriberChannel).remove(topic);
         }
-    }
-
-    private void response(ResponseType responseType, SocketChannel subscriberChannel) throws IOException {
-        switch (responseType) {
-            case TOPICS:
-                for (String topic : topicsAvailable) {
-                    sendTopic(subscriberChannel, topic);
-                    System.out.println("Topic sent: " + topic);
-                }
-                endResponse(subscriberChannel);
-                break;
-            case UPDATE_TOPIC:
-                //SEND NEWS RELATED TO TOPIC
-                break;
-            case DELETE_TOPIC:
-                //SEND CONFIRMATION OF DELETION
-                //subscriberChannel.write(confirmation);
-            case UNKNOWN_COMMAND:
-                //SEND UNKNOWN COMMAND
-                //subscriberChannel.write("UNKNOWN COMMAND");
-            default:
-                System.out.println("THE RESPONSE WAS NOT SEND.");
-        }
+        System.out.println(subscriberChannel.socket().getPort() + " unsubscribing: " + topic);
     }
 
     private void sendTopic(SocketChannel subscriberChannel, String topic) throws IOException {
-        responseForClient = new StringBuffer();
+        StringBuffer responseForClient = new StringBuffer();
         responseForClient.setLength(0);
         responseForClient.append("TOPIC");
-        responseForClient.append(" ");
+        responseForClient.append("\t");
+        responseForClient.append(topic);
+        System.out.println("Response: " + responseForClient);
+        ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
+        subscriberChannel.write(bufferForEncoding);
+    }
+
+    private void updateTopic(String topic, String newsContent) throws IOException {
+        for (var subscriber : subscribers.entrySet()) {
+            if (subscriber.getValue().contains(topic)) {
+                sendUpdateOfTopic(subscriber.getKey(), topic, newsContent);
+            }
+        }
+    }
+
+    private void deleteTopic(String topic) throws IOException {
+        this.topicsAvailable.remove(topic);
+
+        for (var subscriber : subscribers.entrySet()) {
+            if (subscriber.getValue().contains(topic)) {
+                sendTopicDeletion(subscriber.getKey(), topic);
+            }
+        }
+    }
+
+    private void sendUpdateOfTopic(SocketChannel subscriberChannel, String topic, String newsContent) throws IOException {
+        StringBuffer responseForClient = new StringBuffer();
+        responseForClient = new StringBuffer();
+        responseForClient.setLength(0);
+        responseForClient.append("UPDATE");
+        responseForClient.append("\t");
+        responseForClient.append(topic);
+        responseForClient.append("\t");
+        responseForClient.append(newsContent);
+        ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
+        subscriberChannel.write(bufferForEncoding);
+    }
+
+    private void sendTopicDeletion(SocketChannel subscriberChannel, String topic) throws IOException {
+        StringBuffer responseForClient = new StringBuffer();
+        responseForClient = new StringBuffer();
+        responseForClient.setLength(0);
+        responseForClient.append("DELETE");
+        responseForClient.append("\t");
         responseForClient.append(topic);
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
     }
 
+    private void sendTopicToClients(String topic) throws IOException {
+        for (SocketChannel subscriber : subscribers.keySet()) {
+            sendTopic(subscriber, topic);
+        }
+    }
+
     private void endResponse(SocketChannel subscriberChannel) throws IOException {
+        StringBuffer responseForClient = new StringBuffer();
         responseForClient.setLength(0);
         responseForClient.append("END");
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
