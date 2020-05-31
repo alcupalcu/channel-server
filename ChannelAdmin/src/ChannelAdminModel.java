@@ -12,8 +12,6 @@ import java.util.regex.Pattern;
 
 public class ChannelAdminModel {
 
-    private final int CHANNEL_WAITING = 0;
-    private final int CHANNEL_CLOSED = -1;
     private final int BUFF_SIZE = 1024;
 
     private String serverName;
@@ -74,29 +72,64 @@ public class ChannelAdminModel {
         responseBuffer.append("\n");
         ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
         channel.write(outBuffer);
-        System.out.println("Presented as admin");
+        System.out.println("Presented as admin.");
     }
 
-    public void addTopic(String topic) throws Exception {
-        if (!topics.contains(topic)) {
-            topics.add(topic);
-        }
+    public void addTopic(String topic, String color) throws Exception {
         if (!channel.isOpen()) {
             throw new Exception("Channel is closed.");
         }
-        responseBuffer = new StringBuffer();
-        responseBuffer.setLength(0);
-        responseBuffer.append("ADD_TOPIC");
-        responseBuffer.append("\t");
-        responseBuffer.append(topic);
-        responseBuffer.append("\n");
-        ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
-        channel.write(outBuffer);
-        System.out.println("Send topic: " + topic);
+        if (!topics.contains(topic)) {
+            topics.add(topic);
+            responseBuffer = new StringBuffer();
+            responseBuffer.setLength(0);
+            responseBuffer.append("ADD_TOPIC");
+            responseBuffer.append("\t");
+            responseBuffer.append(topic);
+            responseBuffer.append("\t");
+            responseBuffer.append(color);
+            responseBuffer.append("\n");
+            ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+            channel.write(outBuffer);
+            System.out.println("Send topic: " + topic);
+        }
     }
 
-    public void removeTopic(String topic) {
+    public void deleteTopic(String topic) throws Exception {
+        if (!channel.isOpen()) {
+            throw new Exception("Channel is closed.");
+        }
+        if (topics.contains(topic)) {
+            responseBuffer = new StringBuffer();
+            responseBuffer.setLength(0);
+            responseBuffer.append("DELETE_TOPIC");
+            responseBuffer.append("\t");
+            responseBuffer.append(topic);
+            responseBuffer.append("\n");
+            ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+            channel.write(outBuffer);
+            System.out.println("Send topic deletion: " + topic);
+        }
         topics.remove(topic);
+    }
+
+    public void addNews(String topic, String news) throws Exception {
+        if (!channel.isOpen()) {
+            throw new Exception("Channel is closed.");
+        }
+        if (topics.contains(topic)) {
+            responseBuffer = new StringBuffer();
+            responseBuffer.setLength(0);
+            responseBuffer.append("UPDATE_NEWS");
+            responseBuffer.append("\t");
+            responseBuffer.append(topic);
+            responseBuffer.append("\t");
+            responseBuffer.append(news);
+            responseBuffer.append("\n");
+            ByteBuffer outBuffer = charset.encode(CharBuffer.wrap(responseBuffer));
+            channel.write(outBuffer);
+            System.out.println("Send news: " + topic + " " + news);
+        }
     }
 
     private void setServerName(String serverName) {

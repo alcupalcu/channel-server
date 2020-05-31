@@ -4,6 +4,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 
 public class ChannelClientController {
 
@@ -12,7 +13,7 @@ public class ChannelClientController {
     private TopicCheckBoxListener topicCheckBoxListener;
 
     public enum Updates {
-        UPDATE_NEWS,
+        NEWS,
         ADD_TOPIC,
         DELETE_TOPIC
     }
@@ -42,14 +43,14 @@ public class ChannelClientController {
         }
 
         if (clientModel.getChannel().isConnected()) {
-            ArrayList<String> topicsFromServer = clientModel.getTopicsFromServer();
+            HashMap<String, String> topicsFromServer = clientModel.getTopicsFromServer();
             if (!topicsFromServer.isEmpty()) {
                 clientModel.saveTopics(topicsFromServer);
             }
         }
 
         System.out.println("TOPICS RECEIVED FROM SERVER:");
-        for (String topic : clientModel.getTopics()) {
+        for (String topic : clientModel.getTopics().keySet()) {
             System.out.println(topic);
         }
 
@@ -59,10 +60,17 @@ public class ChannelClientController {
         clientModel.getUpdater().start();
     }
 
-    public void notifyController(Updates code, String data) {
+    public void notifyController(Updates code, String topic, String news) {
         switch (code) {
             case ADD_TOPIC:
-                clientView.feedView(data);
+                clientView.feedView(topic);
+                break;
+            case DELETE_TOPIC:
+                clientView.starveView(topic);
+                break;
+            case NEWS:
+                String color = clientModel.getColorOf(topic);
+                clientView.feedNews(topic, news, color);
                 break;
             default:
                 System.out.println("Unrecognized update");

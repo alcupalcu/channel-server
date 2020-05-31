@@ -19,7 +19,7 @@ public class ChannelServer {
     private ByteBuffer communicationChannelBuffer = ByteBuffer.allocate(BUFFER_SIZE);
     private StringBuffer requestFromClient;
 
-    private ArrayList<String> topicsAvailable;
+    private HashMap<String, String> topicsAvailable;
     private HashMap<SocketChannel, ArrayList<String>> subscribers;
 
     public String hostName;
@@ -29,7 +29,7 @@ public class ChannelServer {
         this.hostName = hostName;
         this.serverPort = serverPort;
         this.subscribers = new HashMap<>();
-        this.topicsAvailable = new ArrayList<>();
+        this.topicsAvailable = new HashMap<>();
         this.requestFromClient = new StringBuffer();
 
         try {
@@ -43,11 +43,6 @@ public class ChannelServer {
         }
 
         System.out.println("Server started ready for requests.");
-
-        /*** TO DELETE AT SOME POINT ***/
-        topicsAvailable.add("SPORT");
-        topicsAvailable.add("MUSIC");
-        topicsAvailable.add("NEWS");
 
         handleConnections();
     }
@@ -114,14 +109,15 @@ public class ChannelServer {
                 break;
             case "ADD_TOPIC":
                 String topicAdded = requestContent[1];
+                String color = requestContent[2];
                 System.out.println("Admin adding topic " + topicAdded + ".");
-                this.topicsAvailable.add(topicAdded);
-                sendTopicToClients(topicAdded);
+                this.topicsAvailable.put(topicAdded, color);
+                sendTopicToClients(topicAdded, color);
                 break;
             case "UPDATE_NEWS":
                 String topicToUpdate = requestContent[1];
                 String newsContent = requestContent[2];
-                System.out.println("Admin updating topic " + topicToUpdate + ".");
+                System.out.println("Admin updating topic " + topicToUpdate +" with " + newsContent + ".");
                 updateTopic(topicToUpdate, newsContent);
                 break;
             case "DELETE_TOPIC":
@@ -187,9 +183,11 @@ public class ChannelServer {
     }
 
     private void sendTopics(SocketChannel subscriberChannel) throws IOException {
-        for (String topic : topicsAvailable) {
-            sendTopic(subscriberChannel, topic);
-            System.out.println("Topic sent: " + topic);
+        if (!topicsAvailable.isEmpty()) {
+            for (String topic : topicsAvailable.keySet()) {
+                sendTopic(subscriberChannel, topic, topicsAvailable.get(topic));
+                System.out.println("Topic sent: " + topic);
+            }
         }
         endResponse(subscriberChannel);
         System.out.println("Topics sent to the client listening on port: " + subscriberChannel.socket().getPort());
@@ -216,12 +214,15 @@ public class ChannelServer {
         System.out.println(subscriberChannel.socket().getPort() + " unsubscribing: " + topic);
     }
 
-    private void sendTopic(SocketChannel subscriberChannel, String topic) throws IOException {
+    private void sendTopic(SocketChannel subscriberChannel, String topic, String color) throws IOException {
         StringBuffer responseForClient = new StringBuffer();
         responseForClient.setLength(0);
         responseForClient.append("TOPIC");
         responseForClient.append("\t");
         responseForClient.append(topic);
+        responseForClient.append("\t");
+        responseForClient.append(color);
+        responseForClient.append("\t");
         System.out.println("Response: " + responseForClient);
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
@@ -231,6 +232,7 @@ public class ChannelServer {
         for (var subscriber : subscribers.entrySet()) {
             if (subscriber.getValue().contains(topic)) {
                 sendUpdateOfTopic(subscriber.getKey(), topic, newsContent);
+                endResponse(subscriber.getKey());
             }
         }
     }
@@ -238,10 +240,9 @@ public class ChannelServer {
     private void deleteTopic(String topic) throws IOException {
         this.topicsAvailable.remove(topic);
 
-        for (var subscriber : subscribers.entrySet()) {
-            if (subscriber.getValue().contains(topic)) {
-                sendTopicDeletion(subscriber.getKey(), topic);
-            }
+        for (var subscriber : subscribers.keySet()) {
+            sendTopicDeletion(subscriber, topic);
+            endResponse(subscriber);
         }
     }
 
@@ -249,11 +250,12 @@ public class ChannelServer {
         StringBuffer responseForClient = new StringBuffer();
         responseForClient = new StringBuffer();
         responseForClient.setLength(0);
-        responseForClient.append("UPDATE");
+        responseForClient.append("NEWS");
         responseForClient.append("\t");
         responseForClient.append(topic);
         responseForClient.append("\t");
         responseForClient.append(newsContent);
+        responseForClient.append("\t");
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
     }
@@ -262,23 +264,26 @@ public class ChannelServer {
         StringBuffer responseForClient = new StringBuffer();
         responseForClient = new StringBuffer();
         responseForClient.setLength(0);
-        responseForClient.append("DELETE");
+        responseForClient.append("DELETE_TOPIC");
         responseForClient.append("\t");
         responseForClient.append(topic);
+        responseForClient.append("\t");
+        System.out.println(responseForClient.toString() + " sent.");
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
     }
 
-    private void sendTopicToClients(String topic) throws IOException {
+    private void sendTopicToClients(String topic, String color) throws IOException {
         for (SocketChannel subscriber : subscribers.keySet()) {
-            sendTopic(subscriber, topic);
+            sendTopic(subscriber, topic, color);
+            endResponse(subscriber);
         }
     }
 
     private void endResponse(SocketChannel subscriberChannel) throws IOException {
         StringBuffer responseForClient = new StringBuffer();
         responseForClient.setLength(0);
-        responseForClient.append("END");
+        responseForClient.append("END\n");
         ByteBuffer bufferForEncoding = requestsCharset.encode(CharBuffer.wrap(responseForClient));
         subscriberChannel.write(bufferForEncoding);
     }

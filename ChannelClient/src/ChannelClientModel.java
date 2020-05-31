@@ -6,7 +6,7 @@ import java.nio.CharBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,16 +24,16 @@ public class ChannelClientModel {
     private ByteBuffer inBuffer = ByteBuffer.allocateDirect(BUFF_SIZE);
     private StringBuffer responseBuffer;
 
-    private Matcher matchEnd = Pattern.compile("END").matcher("");
+    private Matcher matchEnd = Pattern.compile("END\n").matcher("");
 
-    private ArrayList<String> topics;
+    private HashMap<String, String> topics;
 
     private Updater updater;
 
     ChannelClientModel(String serverName, int serverPortNumber, ChannelClientController controller) {
         setServerName(serverName);
         setServerPortNumber(serverPortNumber);
-        this.topics = new ArrayList<>();
+        this.topics = new HashMap<>();
 
         try {
             channel = SocketChannel.open();
@@ -68,16 +68,16 @@ public class ChannelClientModel {
         System.out.println("CONNECTED.");
     }
 
-    public void saveTopics(ArrayList<String> topicsFromServer) {
-        for (String topic : topicsFromServer) {
-            if (!this.topics.contains(topic)) {
-                topics.add(topic);
+    public void saveTopics(HashMap<String, String> topicsFromServer) {
+        for (String topic : topicsFromServer.keySet()) {
+            if (!this.topics.containsKey(topic)) {
+                topics.put(topic, topicsFromServer.get(topic));
             }
         }
     }
 
-    public ArrayList<String> getTopicsFromServer() {
-        ArrayList<String> topicsFromServer = new ArrayList<>();
+    public HashMap<String, String> getTopicsFromServer() {
+        HashMap<String, String> topicsFromServer = new HashMap<>();
 
         try {
             CharBuffer charBuffer;
@@ -97,7 +97,7 @@ public class ChannelClientModel {
                     charBuffer.clear();
                     matchEnd.reset(charBuffer);
                     if (matchEnd.find()) {
-                        System.out.println("ENDED RECEIVING.");
+                        System.out.println("ENDED RECEIVING TOPICS.");
                         break;
                     } else {
                         String[] response = responseBuffer.toString().split("\t");
@@ -106,8 +106,9 @@ public class ChannelClientModel {
                         }
                         String label = response[0];
                         String topic = response[1];
+                        String color = response[2];
                         if (label.equals("TOPIC")) {
-                            topicsFromServer.add(topic);
+                            topicsFromServer.put(topic, color);
                         }
                     }
                 }
@@ -164,6 +165,13 @@ public class ChannelClientModel {
         channel.write(outBuffer);
     }
 
+    public String getColorOf(String topic) {
+        if (topics.containsKey(topic)) {
+            return topics.get(topic);
+        }
+        return "WHITE";
+    }
+
     private void setServerName(String serverName) {
         this.serverName = serverName;
     }
@@ -180,7 +188,7 @@ public class ChannelClientModel {
         return this.serverPortNumber;
     }
 
-    public ArrayList<String> getTopics() {
+    public HashMap<String, String> getTopics() {
         return this.topics;
     }
 
@@ -197,7 +205,7 @@ public class ChannelClientModel {
         private Charset charset = StandardCharsets.UTF_8;
         private ByteBuffer inBuffer = ByteBuffer.allocate(BUFF_SIZE);
         private StringBuffer updateContentBuffer;
-        private Matcher matchEnd = Pattern.compile("END").matcher("");
+        private Matcher matchEnd = Pattern.compile("END\n").matcher("");
 
         private SocketChannel communicationChannelForUpdate;
         private ChannelClientController controller;
@@ -226,25 +234,46 @@ public class ChannelClientModel {
                         CharBuffer inCharBuffer = charset.decode(inBuffer);
                         updateContentBuffer.append(inCharBuffer);
                         inCharBuffer.clear();
-                        String[] update = updateContentBuffer.toString().split("\t");
-                        if (update.length < 2) {
-                            break;
-                        }
-                        String command = update[0];
-                        if (command.equals("UPDATE_NEWS")) {
-                            if (update.length < 3) {
-                                break;
-                            }
-                        }
+                        matchEnd.reset(inCharBuffer);
+                        if (matchEnd.find()) {
+                            String[] updates = updateContentBuffer.toString().split("\tEND\n");
+                            for (String update : updates) {
+                                String[] oneUpdate = update.split("\t");
+                                if (oneUpdate.length < 2) {
+                                    break;
+                                }
+                                String command = oneUpdate[0];
+                                if (command.equals("NEWS")) {
+                                    if (oneUpdate.length < 3) {
+                                        break;
+                                    }
+                                }
 
-                        switch (command) {
-                            case "TOPIC":
-                                String topic = update[1];
-                                topics.add(topic);
-                                controller.notifyController(ChannelClientController.Updates.ADD_TOPIC, topic);
-                                break;
-                            default:
-                                System.out.println("Update request unrecognized.");
+                                for (String word : oneUpdate) {
+                                    System.out.print(word + " ");
+                                }
+                                System.out.println();
+
+                                switch (command) {
+                                    case "TOPIC":
+                                        String topicToAdd = oneUpdate[1];
+                                        String color = oneUpdate[2];
+                                        topics.put(topicToAdd, color);
+                                        controller.notifyController(ChannelClientController.Updates.ADD_TOPIC, topicToAdd, null);
+                                        break;
+                                    case "DELETE_TOPIC":
+                                        String topicForDeletion = oneUpdate[1];
+                                        topics.remove(topicForDeletion);
+                                        controller.notifyController(ChannelClientController.Updates.DELETE_TOPIC, topicForDeletion, null);
+                                        break;
+                                    case "NEWS":
+                                        String topicOfNews = oneUpdate[1];
+                                        String news = oneUpdate[2];
+                                        controller.notifyController(ChannelClientController.Updates.NEWS, topicOfNews, news);
+                                    default:
+                                        System.out.println("Update request unrecognized.");
+                                }
+                            }
                         }
                     }
                 }
